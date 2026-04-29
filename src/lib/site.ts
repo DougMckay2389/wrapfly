@@ -31,15 +31,12 @@ export const NAV = {
   footer: {
     Shop: [
       { label: "All categories", href: "/c" },
-      { label: "Brands", href: "/brands" },
-      { label: "New arrivals", href: "/new" },
-      { label: "Best sellers", href: "/best-sellers" },
+      { label: "Search", href: "/search" },
     ],
     Help: [
-      { label: "Shipping & returns", href: "/help/shipping" },
-      { label: "International shipping", href: "/help/international" },
-      { label: "Contact", href: "/contact" },
-      { label: "FAQ", href: "/help/faq" },
+      { label: "Shipping policy", href: "/shipping" },
+      { label: "Returns & refunds", href: "/returns" },
+      { label: "FAQ", href: "/faq" },
     ],
     Account: [
       { label: "Sign in", href: "/account/sign-in" },

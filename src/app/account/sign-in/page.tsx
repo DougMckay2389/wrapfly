@@ -13,13 +13,28 @@ async function signIn(formData: FormData) {
   "use server";
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const redirectTo = String(formData.get("redirect") ?? "/account");
+  const requested = String(formData.get("redirect") ?? "");
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data: signInData, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
   if (error) {
     redirect(`/account/sign-in?error=${encodeURIComponent(error.message)}`);
   }
-  redirect(redirectTo);
+  // If a specific redirect was requested (e.g. ?redirect=/cart), honor it.
+  // Otherwise, send admins straight to the admin dashboard and customers to
+  // their account dashboard.
+  let target = requested || "/account";
+  if (!requested && signInData.user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_admin")
+      .eq("id", signInData.user.id)
+      .maybeSingle();
+    if (profile?.is_admin) target = "/admin";
+  }
+  redirect(target);
 }
 
 export default async function SignInPage({
@@ -42,7 +57,7 @@ export default async function SignInPage({
       ) : null}
 
       <form action={signIn} className="mt-6 space-y-4">
-        <input type="hidden" name="redirect" value={redirectTo ?? "/account"} />
+        <input type="hidden" name="redirect" value={redirectTo ?? ""} />
         <div>
           <label className="text-sm font-medium block mb-1" htmlFor="email">
             Email

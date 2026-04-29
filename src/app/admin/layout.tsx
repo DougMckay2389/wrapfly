@@ -1,5 +1,15 @@
 import Link from "next/link";
-import { Package, Tag, Mail, Box, Users, BarChart3 } from "lucide-react";
+import {
+  Package,
+  Tag,
+  Mail,
+  Box,
+  Users,
+  BarChart3,
+  FolderTree,
+  FileText,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +30,12 @@ export default async function AdminLayout({
           <Item href="/admin" icon={BarChart3} label="Dashboard" />
           <Item href="/admin/orders" icon={Package} label="Orders" />
           <Item href="/admin/products" icon={Box} label="Products" />
-          <Item href="/admin/coupons" icon={Tag} label="Coupons" />
-          <Item href="/admin/email-templates" icon={Mail} label="Email templates" />
+          <Item href="/admin/categories" icon={FolderTree} label="Categories" />
+          <Item href="/admin/coupons" icon={Tag} label="Discounts" />
           <Item href="/admin/customers" icon={Users} label="Customers" />
+          <Item href="/admin/pages" icon={FileText} label="Pages" />
+          <Item href="/admin/email-templates" icon={Mail} label="Email templates" />
+          <Item href="/admin/settings" icon={SettingsIcon} label="Settings" />
         </nav>
         <div className="mt-6 text-xs text-[var(--color-muted)]">
           <Link href="/" className="hover:underline">← Back to storefront</Link>

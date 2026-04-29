@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ShoppingCart, Search, User } from "lucide-react";
+import { ShoppingCart, Search, User, ShieldCheck } from "lucide-react";
 import { NAV } from "@/lib/site";
 import { readCartCount } from "@/lib/cart";
+import { getProfile } from "@/lib/auth";
 
 export async function SiteHeader() {
   // Best-effort: cart lookup may fail when middleware hasn't run yet
@@ -12,6 +13,17 @@ export async function SiteHeader() {
   } catch {
     cartCount = 0;
   }
+  // Best-effort: profile lookup also fails outside a request scope.
+  let profile: Awaited<ReturnType<typeof getProfile>> = null;
+  try {
+    profile = await getProfile();
+  } catch {
+    profile = null;
+  }
+  const accountHref = profile ? "/account" : "/account/sign-in";
+  const accountLabel = profile
+    ? `Signed in as ${profile.email}`
+    : "Sign in";
 
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--color-border)] bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70">
@@ -48,10 +60,20 @@ export async function SiteHeader() {
           >
             <Search className="h-5 w-5" />
           </Link>
+          {profile?.is_admin ? (
+            <Link
+              href="/admin"
+              className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--color-brand-100)] text-[var(--color-brand-900)] text-xs font-semibold hover:bg-[var(--color-brand-200)]"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Admin
+            </Link>
+          ) : null}
           <Link
-            href="/account/sign-in"
+            href={accountHref}
             className="p-2 rounded-md hover:bg-[var(--color-muted-bg)]"
-            aria-label="Account"
+            aria-label={accountLabel}
+            title={accountLabel}
           >
             <User className="h-5 w-5" />
           </Link>
