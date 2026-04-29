@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { mergeGuestCartIntoUser } from "@/lib/cart";
+import { mergeGuestWishlistIntoUser } from "@/lib/wishlist";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -21,6 +23,13 @@ async function signIn(formData: FormData) {
   });
   if (error) {
     redirect(`/account/sign-in?error=${encodeURIComponent(error.message)}`);
+  }
+  // Merge any guest cart + wishlist into the now-authenticated user.
+  if (signInData.user) {
+    await Promise.all([
+      mergeGuestCartIntoUser().catch(() => undefined),
+      mergeGuestWishlistIntoUser(signInData.user.id).catch(() => undefined),
+    ]);
   }
   // If a specific redirect was requested (e.g. ?redirect=/cart), honor it.
   // Otherwise, send admins straight to the admin dashboard and customers to

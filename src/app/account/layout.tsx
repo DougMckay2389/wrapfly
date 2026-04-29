@@ -18,6 +18,9 @@ export default function AccountLayout({
             <Link href="/account/orders" className="px-3 py-2 rounded-md hover:bg-[var(--color-muted-bg)]">
               Orders
             </Link>
+            <Link href="/account/wishlist" className="px-3 py-2 rounded-md hover:bg-[var(--color-muted-bg)]">
+              Saved items
+            </Link>
             <Link href="/account/addresses" className="px-3 py-2 rounded-md hover:bg-[var(--color-muted-bg)]">
               Addresses
             </Link>

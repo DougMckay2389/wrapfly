@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import { formatPrice, cn } from "@/lib/utils";
 import { ALL_FINISHES, getFinishes, prettySize, type Finish } from "@/lib/finishes";
+import { SaveForLaterButton } from "@/components/save-for-later-button";
 
 type Props = {
   product: Pick<
@@ -306,12 +307,10 @@ export function VariantSelector({ product, variants }: Props) {
             variantId={selectedVariant?.id}
             disabled={!fullySelected || !inStock}
           />
-          <button
-            type="button"
-            className="px-4 py-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-brand-900)] text-sm"
-          >
-            Save for later
-          </button>
+          <SaveForLaterButton
+            productId={product.id}
+            variantId={selectedVariant?.id}
+          />
         </div>
       </div>
     </div>
