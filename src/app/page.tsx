@@ -38,7 +38,8 @@ export default async function HomePage() {
             </h1>
             <p className="mt-5 max-w-xl text-lg text-[var(--color-brand-200)]">
               3M, Avery, Oracal, and the brands you trust — vinyl, substrates,
-              equipment, and accessories. Shipped fast from US warehouses.
+              equipment, and accessories. <strong className="text-white">Same-day shipping</strong>{" "}
+              on orders placed before 2pm CT.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
