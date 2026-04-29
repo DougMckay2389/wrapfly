@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { absoluteUrl } from "@/lib/utils";
+import { siteUrl } from "@/lib/site-url";
 
 export const metadata: Metadata = {
   title: "Reset your password",
@@ -15,7 +15,7 @@ async function reset(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const supabase = await createClient();
   await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: absoluteUrl("/auth/callback?next=/account/profile"),
+    redirectTo: await siteUrl("/auth/callback?next=/account/profile"),
   });
   // Always show "if the address exists, we sent an email" — no enumeration.
   redirect("/account/forgot-password?ok=1");

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { absoluteUrl } from "@/lib/utils";
+import { siteUrl } from "@/lib/site-url";
 
 export const metadata: Metadata = {
   title: "Create account",
@@ -21,7 +21,7 @@ async function signUp(formData: FormData) {
     password,
     options: {
       data: { full_name: fullName },
-      emailRedirectTo: absoluteUrl("/auth/callback"),
+      emailRedirectTo: await siteUrl("/auth/callback"),
     },
   });
   if (error) {
