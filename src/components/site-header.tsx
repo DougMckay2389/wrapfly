@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { ShoppingCart, Search, User, ShieldCheck } from "lucide-react";
-import { NAV } from "@/lib/site";
 import { readCartCount } from "@/lib/cart";
 import { getProfile } from "@/lib/auth";
+import { CategoryMegaMenu } from "@/components/category-mega-menu";
 
 export async function SiteHeader() {
   // Best-effort: cart lookup may fail when middleware hasn't run yet
@@ -37,20 +37,7 @@ export async function SiteHeader() {
           Wrapfly
         </Link>
 
-        <nav
-          className="hidden lg:flex items-center gap-5 text-sm"
-          aria-label="Primary"
-        >
-          {NAV.main.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="text-[var(--color-brand-700)] hover:text-[var(--color-brand-900)] transition-colors"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <CategoryMegaMenu />
 
         <div className="ml-auto flex items-center gap-1">
           <Link

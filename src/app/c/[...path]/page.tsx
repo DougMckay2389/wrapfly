@@ -23,21 +23,47 @@ async function loadCategory(path: string[]) {
 
   if (!category) return null;
 
-  const [{ data: subs }, { data: products }] = await Promise.all([
-    supabase
-      .from("categories")
-      .select("name, slug, description, image_url, path")
-      .eq("parent_id", category.id)
-      .eq("is_active", true)
-      .order("display_order"),
-    supabase
-      .from("products")
-      .select("name, slug, brand, base_price, images")
-      .eq("category_id", category.id)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(48),
-  ]);
+  // Pull every descendant category so we can (a) render the subcategory grid
+  // with product counts and (b) include descendant products in the listing.
+  const { data: descendants } = await supabase
+    .from("categories")
+    .select("id, name, slug, description, image_url, path, parent_id, display_order")
+    .like("path", `${category.path}/%`)
+    .eq("is_active", true)
+    .order("display_order");
+
+  const directSubs = (descendants ?? []).filter((c) => c.parent_id === category.id);
+  const allCatIds = [category.id, ...(descendants ?? []).map((c) => c.id)];
+
+  const { data: products } = await supabase
+    .from("products")
+    .select("name, slug, brand, base_price, images, category_id")
+    .in("category_id", allCatIds)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(96);
+
+  // Counts per descendant subcategory (shown as a badge on each tile).
+  const countsByCat = new Map<string, number>();
+  for (const p of products ?? []) {
+    if (!p.category_id) continue;
+    countsByCat.set(p.category_id, (countsByCat.get(p.category_id) ?? 0) + 1);
+  }
+  // Roll counts up from leaf categories to direct subcategories.
+  const subCounts = new Map<string, number>();
+  for (const sub of directSubs) {
+    let total = countsByCat.get(sub.id) ?? 0;
+    for (const desc of descendants ?? []) {
+      if (desc.parent_id !== sub.id && !desc.path.startsWith(`${sub.path}/`)) continue;
+      total += countsByCat.get(desc.id) ?? 0;
+    }
+    subCounts.set(sub.id, total);
+  }
+
+  const subs = directSubs.map((s) => ({
+    ...s,
+    productCount: subCounts.get(s.id) ?? 0,
+  }));
 
   // Build breadcrumb chain by walking up parent_id.
   const trail: Crumb[] = [{ label: "Home", href: "/" }];
@@ -55,7 +81,7 @@ async function loadCategory(path: string[]) {
   }
   for (const c of chain) trail.push({ label: c.name, href: `/c/${c.path}` });
 
-  return { category, subs: subs ?? [], products: products ?? [], trail };
+  return { category, subs, products: products ?? [], trail };
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
@@ -132,8 +158,10 @@ export default async function CategoryPage({ params }: Params) {
                   key={s.slug}
                   href={`/c/${s.path}`}
                   name={s.name}
+                  slug={s.slug}
                   description={s.description}
                   imageUrl={s.image_url}
+                  productCount={s.productCount}
                 />
               ))}
             </div>

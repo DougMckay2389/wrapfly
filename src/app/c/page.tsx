@@ -56,6 +56,7 @@ export default async function AllCategoriesPage() {
                           key={c.slug}
                           href={`/c/${c.path}`}
                           name={c.name}
+                          slug={c.slug}
                           description={c.description}
                           imageUrl={c.image_url}
                         />
@@ -64,6 +65,7 @@ export default async function AllCategoriesPage() {
                         <CategoryCard
                           href={`/c/${root.path}`}
                           name={root.name}
+                          slug={root.slug}
                           description={root.description}
                           imageUrl={root.image_url}
                         />
