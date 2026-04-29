@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:build": "opennextjs-cloudflare build",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
     "scrape:grimco": "tsx scripts/grimco/scrape.ts",
     "scrape:grimco:resume": "tsx scripts/grimco/scrape.ts --resume",
