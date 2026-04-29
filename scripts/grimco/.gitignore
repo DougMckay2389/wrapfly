@@ -1,0 +1,6 @@
+# Persistent Chrome profile created on first run; contains your Grimco session
+# cookies. Never commit.
+.profile/
+
+# Scraper output. Re-creatable but big and per-run.
+output/

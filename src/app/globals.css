@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/*
+  Wrapfly design system. Tailwind v4 uses `@theme` to register tokens.
+  Design language: clean industrial, swatch-forward, fast-loading.
+  Light mode only by default — wrap installers / shop owners need crisp
+  product imagery and color accuracy that dark mode hurts.
+*/
+
+@theme inline {
+  /* Brand colors */
+  --color-brand-50:  #f8fafc;
+  --color-brand-100: #f1f5f9;
+  --color-brand-200: #e2e8f0;
+  --color-brand-300: #cbd5e1;
+  --color-brand-400: #94a3b8;
+  --color-brand-500: #64748b;
+  --color-brand-600: #475569;
+  --color-brand-700: #334155;
+  --color-brand-800: #1e293b;
+  --color-brand-900: #0f172a;
+  --color-brand-950: #020617;
+
+  --color-accent-500: #ef4444;
+  --color-accent-600: #dc2626;
+  --color-accent-700: #b91c1c;
+
+  --color-bg:        #ffffff;
+  --color-fg:        #0f172a;
+  --color-muted:     #64748b;
+  --color-muted-bg:  #f8fafc;
+  --color-border:    #e2e8f0;
+  --color-success:   #16a34a;
+  --color-warn:      #f59e0b;
+  --color-danger:    #dc2626;
+
+  /* Typography */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-sans);
+
+  /* Radius */
+  --radius-xs:  4px;
+  --radius-sm:  6px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+
+  /* Shadows */
+  --shadow-card:    0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06);
+  --shadow-pop:     0 8px 24px -8px rgb(15 23 42 / 0.18);
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Skip link for keyboard users — SEO/a11y */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--color-brand-900);
+  color: white;
+  padding: 8px 12px;
+  z-index: 100;
+  text-decoration: none;
+}
+.skip-link:focus { top: 0; }
+
+/* Swatch button — color picker on product page */
+.swatch {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 2px solid transparent;
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+  transition: transform 0.08s ease, border-color 0.08s ease;
+}
+.swatch:hover { transform: scale(1.06); }
+.swatch[data-selected="true"] {
+  border-color: var(--color-brand-900);
+  outline: 2px solid var(--color-brand-200);
+  outline-offset: 2px;
+}
+.swatch[data-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.swatch[data-disabled="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top right,
+    transparent calc(50% - 1px),
+    rgba(0, 0, 0, 0.6) 50%,
+    transparent calc(50% + 1px)
+  );
+}
+
+/* Container — wider than Tailwind default for catalog grids */
+.container-wf {
+  width: 100%;
+  max-width: 1320px;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+@media (min-width: 768px) { .container-wf { padding-inline: 1.5rem; } }

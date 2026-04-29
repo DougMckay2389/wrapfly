@@ -1,0 +1,67 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files — DO NOT COMMIT (contain Supabase service role + Square + Resend keys)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# OpenNext build output
+.open-next/
+
+# Cloudflare Workers local state
+.wrangler/
+cloudflare-env.d.ts
+
+# Playwright persistent profiles (contain Grimco session cookies — sensitive)
+**/.profile/
+
+# Grimco scraper outputs (re-creatable per run, can be large)
+scripts/grimco/output/
+scripts/grimco/banner-materials.csv
+scripts/grimco/full-feed.csv
+scripts/grimco/grimco_master.csv
+scripts/grimco/magnetics.csv
+
+# Logs
+/tmp/install*.log
+*.log
+
+# IDE
+.vscode/
+.idea/

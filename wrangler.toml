@@ -1,0 +1,44 @@
+# Wrangler config for Cloudflare Workers deployment via OpenNext.
+# Run `npm run deploy` to build with OpenNext and deploy.
+# Run `npm run preview` to preview the worker locally.
+#
+# Secrets (set via `wrangler secret put` or the Cloudflare dashboard):
+#   - SUPABASE_SERVICE_ROLE_KEY    (server-only privileged key)
+#   - SQUARE_ACCESS_TOKEN          (Square sandbox/production token)
+#   - SQUARE_WEBHOOK_SIGNATURE_KEY (Square webhook signing key)
+#   - RESEND_API_KEY               (transactional email)
+
+name = "wrapfly"
+main = ".open-next/worker.js"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
+# Static assets (Next.js public/ + immutable build assets) served by Workers.
+assets = { directory = ".open-next/assets", binding = "ASSETS" }
+
+# OpenNext requires a placement strategy for the cache.
+placement = { mode = "smart" }
+
+# Public env vars (committed). Secrets go via `wrangler secret put`.
+[vars]
+NEXT_PUBLIC_SUPABASE_URL = "https://mtocuyoydedhmjzvocra.supabase.co"
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_sHQJ1UvMUetHM2xRM800eQ_gZC-osDw"
+NEXT_PUBLIC_SITE_URL = "https://wrapfly.com"
+NEXT_PUBLIC_SQUARE_APPLICATION_ID = ""    # set per-env
+NEXT_PUBLIC_SQUARE_LOCATION_ID = ""        # set per-env
+NEXT_PUBLIC_SQUARE_ENVIRONMENT = "sandbox" # "sandbox" | "production"
+
+# KV for ISR / cache (created by `wrangler kv:namespace create`)
+# [[kv_namespaces]]
+# binding = "NEXT_INC_CACHE_KV"
+# id = "REPLACE_AFTER_CREATE"
+
+# R2 for image uploads (optional)
+# [[r2_buckets]]
+# binding = "MEDIA"
+# bucket_name = "wrapfly-media"
+
+# Custom domain (uncomment after DNS cutover):
+# [[routes]]
+# pattern = "wrapfly.com/*"
+# zone_name = "wrapfly.com"
