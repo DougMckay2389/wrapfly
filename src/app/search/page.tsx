@@ -20,36 +20,52 @@ export async function generateMetadata({
       ? `Wrapfly search results for "${q}" — vinyl, substrates, equipment, and accessories.`
       : "Search Wrapfly's full catalog of vinyl, substrates, sign supplies, equipment, and accessories.",
     alternates: { canonical: q ? `/search?q=${encodeURIComponent(q)}` : "/search" },
-    robots: { index: false, follow: true }, // search-result pages typically shouldn't be indexed
+    robots: { index: false, follow: true },
   };
 }
+
+type SP = {
+  q?: string;
+  brand?: string;
+  cat?: string;
+  min?: string;
+  max?: string;
+  sort?: string;
+};
+
+type ProductRow = {
+  id: string;
+  name: string;
+  slug: string;
+  brand: string | null;
+  base_price: number;
+  images: string[] | null;
+  category_id: string | null;
+};
 
 export default async function SearchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; brand?: string }>;
+  searchParams: Promise<SP>;
 }) {
-  const { q, brand } = await searchParams;
-  const query = (q ?? "").trim();
+  const sp = await searchParams;
+  const query = (sp.q ?? "").trim();
+  const brandFilter = sp.brand ?? "";
+  const catFilter = sp.cat ?? "";
+  const minPrice = sp.min ? Number(sp.min) : undefined;
+  const maxPrice = sp.max ? Number(sp.max) : undefined;
+  const sort = sp.sort ?? "relevance";
 
   const supabase = await createClient();
-  let results: Array<{
-    name: string;
-    slug: string;
-    brand: string | null;
-    base_price: number;
-    images: string[];
-  }> = [];
+  let results: ProductRow[] = [];
+  const ran = query.length >= 2;
 
-  if (query.length >= 2) {
-    // Build a Postgres OR filter: name ilike, brand ilike, sku ilike,
-    // short_description ilike. Tags filter as a separate path so we hit
-    // the GIN-friendly array op.
-    const safe = query.replace(/[%_]/g, ""); // strip wildcards from user input
+  if (ran) {
+    const safe = query.replace(/[%_]/g, "");
     const like = `%${safe}%`;
-    const { data } = await supabase
+    let q = supabase
       .from("products")
-      .select("name, slug, brand, base_price, images")
+      .select("id, name, slug, brand, base_price, images, category_id")
       .eq("is_active", true)
       .or(
         [
@@ -59,12 +75,63 @@ export default async function SearchPage({
           `short_description.ilike.${like}`,
         ].join(","),
       )
-      .limit(60);
-    results = (data as typeof results) ?? [];
+      .limit(200);
+    if (brandFilter) q = q.eq("brand", brandFilter);
+    if (minPrice !== undefined && !isNaN(minPrice)) q = q.gte("base_price", minPrice);
+    if (maxPrice !== undefined && !isNaN(maxPrice)) q = q.lte("base_price", maxPrice);
+    if (sort === "price_asc") q = q.order("base_price", { ascending: true });
+    else if (sort === "price_desc") q = q.order("base_price", { ascending: false });
+    else if (sort === "newest") q = q.order("created_at", { ascending: false });
 
-    if (brand) {
-      results = results.filter((p) => p.brand === brand);
+    const { data } = await q;
+    results = (data ?? []) as ProductRow[];
+  }
+
+  // Apply category filter post-fetch (path-based) so descendants are included
+  let categoryById = new Map<string, { id: string; name: string; path: string }>();
+  let pathById = new Map<string, string>();
+  if (ran) {
+    const { data: cats } = await supabase
+      .from("categories")
+      .select("id, name, path, level")
+      .eq("is_active", true);
+    for (const c of cats ?? []) {
+      categoryById.set(c.id, { id: c.id, name: c.name, path: c.path });
+      pathById.set(c.id, c.path);
     }
+    if (catFilter) {
+      results = results.filter((p) => {
+        if (!p.category_id) return false;
+        const path = pathById.get(p.category_id);
+        if (!path) return false;
+        return path === catFilter || path.startsWith(`${catFilter}/`);
+      });
+    }
+  }
+
+  // Build facet counts from the un-faceted result set
+  const brandCounts = new Map<string, number>();
+  const catCounts = new Map<string, number>();
+  for (const p of results) {
+    if (p.brand) brandCounts.set(p.brand, (brandCounts.get(p.brand) ?? 0) + 1);
+    if (p.category_id) {
+      const path = pathById.get(p.category_id);
+      if (!path) continue;
+      const top = path.split("/")[0];
+      catCounts.set(top, (catCounts.get(top) ?? 0) + 1);
+    }
+  }
+  const topBrands = [...brandCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+  const topCats = [...catCounts.entries()].sort((a, b) => b[1] - a[1]);
+
+  function buildHref(overrides: Partial<SP>) {
+    const merged: SP = { ...sp, ...overrides };
+    const pairs = Object.entries(merged)
+      .filter(([, v]) => v !== undefined && v !== "")
+      .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+    return pairs.length ? `/search?${pairs.join("&")}` : "/search";
   }
 
   return (
@@ -107,47 +174,158 @@ export default async function SearchPage({
           </button>
         </form>
 
-        {query.length >= 2 ? (
-          <>
-            <p className="text-sm text-[var(--color-muted)] mt-4">
-              {results.length} result{results.length === 1 ? "" : "s"}
-              {brand ? ` for brand ${brand}` : ""}
-            </p>
-            {results.length ? (
-              <div className="mt-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                {results.map((p) => (
-                  <ProductCard
-                    key={p.slug}
-                    slug={p.slug}
-                    name={p.name}
-                    brand={p.brand}
-                    basePrice={p.base_price}
-                    image={(p.images as string[])?.[0]}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="mt-10 text-center text-[var(--color-muted)]">
-                <p>No products matched.</p>
-                <p className="mt-2 text-sm">
-                  Try a brand name (3M, Avery, Magnum), a product family (
-                  vinyl wrap, banner, magnetic, latex), or browse by{" "}
-                  <Link href="/c" className="underline">
-                    category
-                  </Link>
-                  .
-                </p>
-              </div>
-            )}
-          </>
-        ) : query ? (
+        {!ran ? (
           <p className="text-sm text-[var(--color-muted)] mt-4">
-            Type at least 2 characters.
+            {query ? "Type at least 2 characters." : "Search by product name, brand, or SKU."}
           </p>
         ) : (
-          <p className="text-sm text-[var(--color-muted)] mt-4">
-            Search by product name, brand, or SKU.
-          </p>
+          <div className="mt-8 grid lg:grid-cols-[240px_1fr] gap-8">
+            {/* Facet sidebar */}
+            <aside className="space-y-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)] mb-2">
+                  Sort
+                </p>
+                <div className="space-y-1">
+                  {[
+                    ["relevance", "Relevance"],
+                    ["newest", "Newest"],
+                    ["price_asc", "Price: low to high"],
+                    ["price_desc", "Price: high to low"],
+                  ].map(([v, l]) => (
+                    <Link
+                      key={v}
+                      href={buildHref({ sort: v })}
+                      className={`block text-sm px-2 py-1 rounded ${sort === v ? "bg-[var(--color-brand-100)] font-medium text-[var(--color-brand-900)]" : "text-[var(--color-brand-700)] hover:bg-[var(--color-muted-bg)]"}`}
+                    >
+                      {l}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+
+              {topCats.length ? (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)] mb-2">
+                    Category
+                  </p>
+                  <div className="space-y-1">
+                    {catFilter ? (
+                      <Link href={buildHref({ cat: "" })} className="block text-xs underline text-[var(--color-muted)] mb-1">
+                        Clear
+                      </Link>
+                    ) : null}
+                    {topCats.map(([path, n]) => {
+                      const cat = [...categoryById.values()].find((c) => c.path === path);
+                      const label = cat?.name ?? path;
+                      const active = catFilter === path;
+                      return (
+                        <Link
+                          key={path}
+                          href={buildHref({ cat: active ? "" : path })}
+                          className={`flex items-center justify-between text-sm px-2 py-1 rounded ${active ? "bg-[var(--color-brand-100)] font-medium text-[var(--color-brand-900)]" : "text-[var(--color-brand-700)] hover:bg-[var(--color-muted-bg)]"}`}
+                        >
+                          <span>{label}</span>
+                          <span className="text-xs text-[var(--color-muted)]">{n}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {topBrands.length ? (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)] mb-2">
+                    Brand
+                  </p>
+                  <div className="space-y-1">
+                    {brandFilter ? (
+                      <Link href={buildHref({ brand: "" })} className="block text-xs underline text-[var(--color-muted)] mb-1">
+                        Clear
+                      </Link>
+                    ) : null}
+                    {topBrands.map(([b, n]) => {
+                      const active = brandFilter === b;
+                      return (
+                        <Link
+                          key={b}
+                          href={buildHref({ brand: active ? "" : b })}
+                          className={`flex items-center justify-between text-sm px-2 py-1 rounded ${active ? "bg-[var(--color-brand-100)] font-medium text-[var(--color-brand-900)]" : "text-[var(--color-brand-700)] hover:bg-[var(--color-muted-bg)]"}`}
+                        >
+                          <span>{b}</span>
+                          <span className="text-xs text-[var(--color-muted)]">{n}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              <form action="/search" method="get" className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+                  Price
+                </p>
+                <input type="hidden" name="q" value={query} />
+                {brandFilter ? <input type="hidden" name="brand" value={brandFilter} /> : null}
+                {catFilter ? <input type="hidden" name="cat" value={catFilter} /> : null}
+                {sort !== "relevance" ? <input type="hidden" name="sort" value={sort} /> : null}
+                <div className="flex gap-2">
+                  <input
+                    name="min"
+                    type="number"
+                    step="1"
+                    placeholder="Min"
+                    defaultValue={sp.min ?? ""}
+                    className="w-full px-2 py-1.5 rounded border border-[var(--color-border)] text-sm"
+                  />
+                  <input
+                    name="max"
+                    type="number"
+                    step="1"
+                    placeholder="Max"
+                    defaultValue={sp.max ?? ""}
+                    className="w-full px-2 py-1.5 rounded border border-[var(--color-border)] text-sm"
+                  />
+                </div>
+                <button className="text-xs px-3 py-1 rounded border border-[var(--color-border)] hover:border-[var(--color-brand-900)]">
+                  Apply
+                </button>
+              </form>
+            </aside>
+
+            <section>
+              <p className="text-sm text-[var(--color-muted)]">
+                {results.length} result{results.length === 1 ? "" : "s"}
+              </p>
+              {results.length ? (
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-5">
+                  {results.map((p) => (
+                    <ProductCard
+                      key={p.slug}
+                      slug={p.slug}
+                      name={p.name}
+                      brand={p.brand}
+                      basePrice={p.base_price}
+                      image={(p.images as string[] | null)?.[0] ?? null}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-10 text-center text-[var(--color-muted)]">
+                  <p>No products matched.</p>
+                  <p className="mt-2 text-sm">
+                    Try a brand name (3M, Avery, Magnum), a product family
+                    (vinyl wrap, banner, magnetic, latex), or browse by{" "}
+                    <Link href="/c" className="underline">
+                      category
+                    </Link>
+                    .
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
         )}
       </div>
     </>

@@ -28,7 +28,15 @@ export default async function AdminOrders({
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
+        <a
+          href={`/admin/orders/export${status ? `?status=${encodeURIComponent(status)}` : ""}`}
+          className="text-sm px-3 py-2 rounded-md border border-[var(--color-border)] hover:border-[var(--color-brand-900)]"
+        >
+          Export CSV
+        </a>
+      </div>
 
       <form className="mt-4 flex flex-wrap gap-2 items-center text-sm">
         <input

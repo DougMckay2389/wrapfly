@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { AnalyticsScripts } from "@/components/analytics-scripts";
 import { SITE } from "@/lib/site";
 import { absoluteUrl } from "@/lib/utils";
 
@@ -107,6 +108,7 @@ export default function RootLayout({
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteLd) }}
         />
+        <AnalyticsScripts />
       </body>
     </html>
   );

@@ -31,6 +31,7 @@ export const NAV = {
   footer: {
     Shop: [
       { label: "All categories", href: "/c" },
+      { label: "Shop by brand", href: "/brand" },
       { label: "Search", href: "/search" },
     ],
     Help: [

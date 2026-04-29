@@ -2,7 +2,10 @@ import Link from "next/link";
 import { ShoppingCart, Search, User, ShieldCheck } from "lucide-react";
 import { readCartCount } from "@/lib/cart";
 import { getProfile } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import { CategoryMegaMenu } from "@/components/category-mega-menu";
+import { MobileNav } from "@/components/mobile-nav";
+import { CartCountBadge } from "@/components/cart-count-badge";
 
 export async function SiteHeader() {
   // Best-effort: cart lookup may fail when middleware hasn't run yet
@@ -25,9 +28,26 @@ export async function SiteHeader() {
     ? `Signed in as ${profile.email}`
     : "Sign in";
 
+  // Load categories once for both mega menu (desktop) and mobile drawer.
+  let categories: Array<{ id: string; name: string; path: string; level: number; parent_id: string | null }> = [];
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("categories")
+      .select("id, name, path, level, parent_id")
+      .eq("is_active", true)
+      .lte("level", 1)
+      .order("level")
+      .order("display_order");
+    categories = data ?? [];
+  } catch {
+    categories = [];
+  }
+
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--color-border)] bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-      <div className="container-wf flex h-16 items-center gap-6">
+      <div className="container-wf flex h-16 items-center gap-3 sm:gap-6">
+        <MobileNav categories={categories} />
         <Link
           href="/"
           className="flex items-center gap-2 font-bold text-xl tracking-tight text-[var(--color-brand-900)]"
@@ -67,14 +87,10 @@ export async function SiteHeader() {
           <Link
             href="/cart"
             className="p-2 rounded-md hover:bg-[var(--color-muted-bg)] relative"
-            aria-label={`Cart (${cartCount} item${cartCount === 1 ? "" : "s"})`}
+            aria-label="Cart"
           >
             <ShoppingCart className="h-5 w-5" />
-            {cartCount > 0 ? (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--color-accent-600)] text-white text-[10px] font-semibold flex items-center justify-center">
-                {cartCount > 99 ? "99+" : cartCount}
-              </span>
-            ) : null}
+            <CartCountBadge initial={cartCount} />
           </Link>
         </div>
       </div>

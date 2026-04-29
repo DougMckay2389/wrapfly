@@ -19,7 +19,7 @@ type TopCategory = {
 export default async function HomePage() {
   const supabase = await createClient();
 
-  const [{ data: topCats }, { data: subCats }, { data: featured }, { data: prods }] =
+  const [{ data: topCats }, { data: subCats }, { data: featured }, { data: newest }, { data: prods }] =
     await Promise.all([
       supabase
         .from("categories")
@@ -34,6 +34,15 @@ export default async function HomePage() {
         .eq("level", 1)
         .eq("is_active", true)
         .order("display_order"),
+      // Editor-curated highlights (tagged "featured" in admin)
+      supabase
+        .from("products")
+        .select("name, slug, brand, base_price, images")
+        .eq("is_active", true)
+        .contains("tags", ["featured"])
+        .order("created_at", { ascending: false })
+        .limit(8),
+      // New arrivals fallback if no featured products exist yet
       supabase
         .from("products")
         .select("name, slug, brand, base_price, images")
@@ -221,9 +230,39 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Featured products */}
+      {/* Featured (editor-picked) — only shown if any product is tagged 'featured' */}
       {featured?.length ? (
         <section className="container-wf py-16">
+          <div className="flex items-end justify-between mb-8">
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
+              Featured
+            </h2>
+            <Link
+              href="/search"
+              className="text-sm font-medium text-[var(--color-brand-900)] hover:underline"
+            >
+              See more
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            {featured.map((p) => (
+              <ProductCard
+                key={p.slug}
+                slug={p.slug}
+                name={p.name}
+                brand={p.brand}
+                basePrice={p.base_price}
+                image={(p.images as string[])?.[0]}
+                badge="Featured"
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {/* New arrivals — always visible */}
+      {newest?.length ? (
+        <section className="container-wf pb-16">
           <div className="flex items-end justify-between mb-8">
             <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
               New arrivals
@@ -236,7 +275,7 @@ export default async function HomePage() {
             </Link>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-            {featured.map((p) => (
+            {newest.map((p) => (
               <ProductCard
                 key={p.slug}
                 slug={p.slug}

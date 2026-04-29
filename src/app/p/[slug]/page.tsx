@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Script from "next/script";
 import { Breadcrumbs, type Crumb } from "@/components/breadcrumbs";
 import { VariantSelector } from "@/components/variant-selector";
+import { ProductCard } from "@/components/product-card";
 import { createClient } from "@/lib/supabase/server";
 import { absoluteUrl } from "@/lib/utils";
 import type {
@@ -66,7 +67,35 @@ async function loadProduct(slug: string) {
   }
   trail.push({ label: product.name, href: `/p/${product.slug}` });
 
-  return { product, variants: (variants ?? []) as ProductVariant[], trail };
+  // Related products: same category, same brand fallback, exclude self.
+  const { data: relatedSameCat } = product.category_id
+    ? await supabase
+        .from("products")
+        .select("name, slug, brand, base_price, images")
+        .eq("is_active", true)
+        .eq("category_id", product.category_id)
+        .neq("id", product.id)
+        .order("created_at", { ascending: false })
+        .limit(8)
+    : { data: [] as Array<{ name: string; slug: string; brand: string | null; base_price: number; images: string[] | null }> };
+
+  let related = relatedSameCat ?? [];
+  if (related.length < 4 && product.brand) {
+    const { data: relatedSameBrand } = await supabase
+      .from("products")
+      .select("name, slug, brand, base_price, images")
+      .eq("is_active", true)
+      .eq("brand", product.brand)
+      .neq("id", product.id)
+      .limit(8 - related.length);
+    const seen = new Set(related.map((r) => r.slug));
+    for (const r of relatedSameBrand ?? []) {
+      if (!seen.has(r.slug)) related.push(r);
+    }
+  }
+  related = related.slice(0, 4);
+
+  return { product, variants: (variants ?? []) as ProductVariant[], trail, related };
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
@@ -104,7 +133,7 @@ export default async function ProductPage({ params }: Params) {
   const { slug } = await params;
   const data = await loadProduct(slug);
   if (!data) notFound();
-  const { product, variants, trail } = data;
+  const { product, variants, trail, related } = data;
 
   // Cheapest in-stock variant for "from" pricing on the schema.
   const inStock = variants.filter((v) => v.is_available && v.stock_qty > 0);
@@ -215,6 +244,7 @@ export default async function ProductPage({ params }: Params) {
             ) : null}
           </div>
 
+          {/* Related products column slot */}
           {product.resources?.length ? (
             <aside>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-muted)] mb-3">
@@ -241,6 +271,26 @@ export default async function ProductPage({ params }: Params) {
           ) : null}
         </section>
       </div>
+
+      {related.length ? (
+        <section className="container-wf pb-16">
+          <h2 className="text-2xl font-semibold tracking-tight mb-6">
+            You may also like
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            {related.map((r) => (
+              <ProductCard
+                key={r.slug}
+                slug={r.slug}
+                name={r.name}
+                brand={r.brand}
+                basePrice={r.base_price}
+                image={(r.images as string[])?.[0]}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <Script
         id={`ld-product-${product.slug}`}
