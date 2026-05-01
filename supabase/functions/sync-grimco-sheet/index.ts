@@ -10,6 +10,8 @@
  *   - product_variants.compare_price (List Price when > our retail)
  *   - products.images[]             (deduped Main Image URLs)
  *   - products.is_active = true     (so newly added sheet rows auto-appear)
+ *   - products.category_id          (re-points product to the category named
+ *                                     in the sheet, find-or-create by slug)
  *
  * Triggered every 5 minutes by pg_cron (job: sync-grimco-sheet-every-5min)
  * and can be invoked manually from /admin/mirror-progress "Sync now".
@@ -84,6 +86,14 @@ function parseNumber(s: string | undefined): number | null {
   return isNaN(n) ? null : n;
 }
 
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -124,6 +134,7 @@ Deno.serve(async (req: Request) => {
       avail: colIdx("Availability"),
       yourPrice: colIdx("Your Price (USD)"),
       listPrice: colIdx("List Price (USD)"),
+      category: colIdx("Category"),
     };
     if (c.sku < 0) {
       return jsonResponse(500, {
@@ -140,6 +151,7 @@ Deno.serve(async (req: Request) => {
       isAvailable?: boolean;
       yourPrice?: number;
       listPrice?: number;
+      category?: string;
     };
     const dataRows: RowParsed[] = [];
     let skipped = 0;
@@ -158,6 +170,10 @@ Deno.serve(async (req: Request) => {
         isAvailable: avail ? avail === "available" : undefined,
         yourPrice: parseNumber(row[c.yourPrice]) ?? undefined,
         listPrice: parseNumber(row[c.listPrice]) ?? undefined,
+        category:
+          c.category >= 0
+            ? ((row[c.category] ?? "").trim() || undefined)
+            : undefined,
       });
     }
 
@@ -188,6 +204,7 @@ Deno.serve(async (req: Request) => {
     let variantsNotFound = 0;
     const productIdsToActivate = new Set<string>();
     const productMainImages = new Map<string, Set<string>>();
+    const productCategoryName = new Map<string, string>(); // first sheet Category seen per product
 
     for (const row of dataRows) {
       const v = existingBySku.get(row.sku);
@@ -196,6 +213,9 @@ Deno.serve(async (req: Request) => {
         continue;
       }
       productIdsToActivate.add(v.product_id);
+      if (row.category && !productCategoryName.has(v.product_id)) {
+        productCategoryName.set(v.product_id, row.category);
+      }
 
       const patch: Record<string, unknown> = {};
       if (row.swatch && row.swatch !== v.image_url) {
@@ -238,13 +258,58 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Per-product updates: is_active=true + merge Main Image URLs
+    // Find-or-create category by sheet name. Cached within this run.
+    const categoryCache = new Map<string, string>(); // slug -> category id
+    let categoriesCreated = 0;
+    async function findOrCreateCategory(name: string): Promise<string | null> {
+      const slug = slugify(name);
+      if (!slug) return null;
+      const cached = categoryCache.get(slug);
+      if (cached) return cached;
+      const { data: existingCat } = await supabase
+        .from("categories")
+        .select("id, is_active")
+        .eq("slug", slug)
+        .maybeSingle();
+      if (existingCat) {
+        if (existingCat.is_active === false) {
+          await supabase
+            .from("categories")
+            .update({ is_active: true })
+            .eq("id", existingCat.id);
+        }
+        categoryCache.set(slug, existingCat.id);
+        return existingCat.id;
+      }
+      const { data: created, error: createErr } = await supabase
+        .from("categories")
+        .insert({
+          name,
+          slug,
+          parent_id: null,
+          level: 0,
+          is_active: true,
+          display_order: 999,
+          path: slug,
+        })
+        .select("id")
+        .single();
+      if (createErr || !created) {
+        return null;
+      }
+      categoriesCreated++;
+      categoryCache.set(slug, created.id);
+      return created.id;
+    }
+
+    // Per-product updates: is_active=true + merge Main Image URLs + category_id
     let productsActivated = 0;
     let productsTouched = 0;
+    let productsRecategorized = 0;
     for (const productId of productIdsToActivate) {
       const { data: prod } = await supabase
         .from("products")
-        .select("is_active, images")
+        .select("is_active, images, category_id")
         .eq("id", productId)
         .single();
 
@@ -268,6 +333,14 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      const sheetCategory = productCategoryName.get(productId);
+      if (sheetCategory) {
+        const targetCatId = await findOrCreateCategory(sheetCategory);
+        if (targetCatId && targetCatId !== prod?.category_id) {
+          updates.category_id = targetCatId;
+        }
+      }
+
       if (Object.keys(updates).length > 0) {
         const { error } = await supabase
           .from("products")
@@ -276,6 +349,7 @@ Deno.serve(async (req: Request) => {
         if (!error) {
           productsTouched++;
           if (updates.is_active === true) productsActivated++;
+          if (updates.category_id) productsRecategorized++;
         }
       }
     }
@@ -289,6 +363,8 @@ Deno.serve(async (req: Request) => {
       variantsNotFound,
       productsTouched,
       productsActivated,
+      productsRecategorized,
+      categoriesCreated,
       elapsedMs: Date.now() - t0,
     });
   } catch (e) {
