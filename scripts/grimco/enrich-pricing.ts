@@ -33,6 +33,7 @@ import { createClient } from "@supabase/supabase-js";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import * as dotenv from "dotenv";
+import { cookiesFileExists, injectCookies } from "./cookies-loader";
 
 dotenv.config({ path: ".env" });
 if (existsSync(".env.local")) {
@@ -431,6 +432,19 @@ async function main() {
         "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
     },
   );
+
+  // If scripts/grimco/cookies.json exists (exported from Chrome Cookie-Editor
+  // while signed in to grimco.com), inject those cookies — much more reliable
+  // than the Playwright-driven login.
+  if (cookiesFileExists()) {
+    try {
+      const n = await injectCookies(browser);
+      console.log(`✓ Injected ${n} cookies from scripts/grimco/cookies.json`);
+    } catch (e) {
+      console.warn(`⚠ Could not inject cookies: ${(e as Error).message}`);
+    }
+  }
+
   const page = browser.pages()[0] ?? (await browser.newPage());
 
   console.log("Checking Grimco session…");
@@ -442,7 +456,8 @@ async function main() {
     console.log("✓ Authenticated.\n");
   } catch {
     console.log(
-      "(no My Account link — run `npm run mirror:login` first if products fail)\n",
+      "(no My Account link — export cookies.json via Chrome Cookie-Editor or\n" +
+        " run `npm run mirror:login` first if products fail)\n",
     );
   }
 

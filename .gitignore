@@ -51,6 +51,9 @@ cloudflare-env.d.ts
 # Playwright persistent profiles (contain Grimco session cookies — sensitive)
 **/.profile/
 
+# Grimco cookies (exported from Chrome Cookie-Editor — NEVER commit)
+scripts/grimco/cookies.json
+
 # Grimco scraper outputs (re-creatable per run, can be large)
 scripts/grimco/output/
 scripts/grimco/banner-materials.csv
