@@ -8,6 +8,7 @@ import {
   BarChart3,
   FolderTree,
   FileText,
+  Activity,
   Settings as SettingsIcon,
 } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
@@ -35,6 +36,7 @@ export default async function AdminLayout({
           <Item href="/admin/customers" icon={Users} label="Customers" />
           <Item href="/admin/pages" icon={FileText} label="Pages" />
           <Item href="/admin/email-templates" icon={Mail} label="Email templates" />
+          <Item href="/admin/mirror-progress" icon={Activity} label="Mirror progress" />
           <Item href="/admin/settings" icon={SettingsIcon} label="Settings" />
         </nav>
         <div className="mt-6 text-xs text-[var(--color-muted)]">

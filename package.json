@@ -20,7 +20,8 @@
     "import:grimco:summary": "tsx scripts/grimco/import-csv-summary.ts",
     "mirror:images": "tsx scripts/grimco/mirror-images-rendered.ts",
     "mirror:images:fast": "tsx scripts/grimco/mirror-images.ts",
-    "mirror:categories": "tsx scripts/grimco/mirror-category-images.ts"
+    "mirror:categories": "tsx scripts/grimco/mirror-category-images.ts",
+    "mirror:login": "tsx scripts/grimco/login-grimco.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

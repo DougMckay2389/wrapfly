@@ -259,11 +259,13 @@ export function VariantSelector({ product, variants }: Props) {
                   disabled={!available}
                   onClick={() => available && pickColor(c.value)}
                   className={cn(
-                    "group relative text-left rounded-lg overflow-hidden border bg-white transition",
-                    selected
+                    "group relative text-left rounded-lg overflow-hidden border transition",
+                    available ? "bg-white" : "bg-[var(--color-muted-bg)] cursor-not-allowed",
+                    selected && available
                       ? "border-[var(--color-brand-900)] ring-2 ring-[var(--color-brand-900)] ring-offset-1"
-                      : "border-[var(--color-border)] hover:border-[var(--color-brand-900)]",
-                    !available && "opacity-50 cursor-not-allowed",
+                      : available
+                        ? "border-[var(--color-border)] hover:border-[var(--color-brand-900)]"
+                        : "border-[var(--color-border)]/50",
                   )}
                 >
                   <div className="aspect-[4/3] bg-[var(--color-muted-bg)] relative">
@@ -272,21 +274,38 @@ export function VariantSelector({ product, variants }: Props) {
                       <img
                         src={c.swatch}
                         alt={c.label}
-                        className="absolute inset-0 w-full h-full object-cover"
+                        className={cn(
+                          "absolute inset-0 w-full h-full object-cover transition",
+                          !available && "grayscale opacity-30",
+                        )}
                         loading="lazy"
                       />
                     ) : null}
                     {!available ? (
-                      <div className="absolute inset-0 flex items-center justify-center bg-white/40 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-brand-900)]">
+                      <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-muted-bg)]/60 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
                         Unavailable
                       </div>
                     ) : null}
                   </div>
                   <div className="p-2.5">
-                    <p className="text-base font-semibold text-[var(--color-accent-700)]">
+                    <p
+                      className={cn(
+                        "text-base font-semibold",
+                        available
+                          ? "text-[var(--color-accent-700)]"
+                          : "text-[var(--color-muted)]",
+                      )}
+                    >
                       {v ? formatPrice(v.price) : "—"}
                     </p>
-                    <p className="text-sm font-medium text-[var(--color-brand-900)] line-clamp-1">
+                    <p
+                      className={cn(
+                        "text-sm font-medium line-clamp-1",
+                        available
+                          ? "text-[var(--color-brand-900)]"
+                          : "text-[var(--color-muted)]",
+                      )}
+                    >
                       {c.label}
                     </p>
                     {sizeLabel ? (

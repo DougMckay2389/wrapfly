@@ -19,6 +19,9 @@
  *   npx tsx scripts/grimco/mirror-images-rendered.ts --limit=5       # first N
  *   npx tsx scripts/grimco/mirror-images-rendered.ts --headless      # no visible window
  *   npx tsx scripts/grimco/mirror-images-rendered.ts --pause-ms=8000 # slower pace
+ *   npx tsx scripts/grimco/mirror-images-rendered.ts \
+ *     --category=automotive-films                                    # scope to a category
+ *     # (resolves the slug + all descendant categories; skips inactive products)
  */
 
 import { chromium, type Page, type BrowserContext } from "playwright";
@@ -44,6 +47,7 @@ const FORCE = flag("force") === "true";
 const LIMIT = Number(flag("limit") ?? "0") || 0;
 const HEADED = flag("headless") !== "true";
 const PAUSE_MS = Number(flag("pause-ms") ?? "5000") || 5000;
+const CATEGORY = flag("category"); // optional slug, e.g. "automotive-films"
 const STORAGE_BUCKET = "products";
 const PROFILE_DIR = resolve(__dirname, ".profile");
 
@@ -179,19 +183,66 @@ async function downloadAndUpload(
   }
 }
 
+/* ---------------------------- category resolver -------------------------- */
+
+async function resolveCategoryIds(slug: string): Promise<string[]> {
+  const { data: root, error: rootErr } = await supabase
+    .from("categories")
+    .select("id, name")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (rootErr) {
+    console.error(`Failed to look up category '${slug}': ${rootErr.message}`);
+    process.exit(1);
+  }
+  if (!root) {
+    console.error(`Category slug not found: '${slug}'`);
+    process.exit(1);
+  }
+  const ids: string[] = [root.id];
+  let frontier: string[] = [root.id];
+  while (frontier.length) {
+    const { data: kids, error } = await supabase
+      .from("categories")
+      .select("id")
+      .in("parent_id", frontier);
+    if (error) {
+      console.error(`Failed walking categories: ${error.message}`);
+      process.exit(1);
+    }
+    if (!kids?.length) break;
+    const kidIds = kids.map((k) => k.id);
+    ids.push(...kidIds);
+    frontier = kidIds;
+  }
+  return ids;
+}
+
 /* -------------------------------- main ----------------------------------- */
 
 async function main() {
   console.log(
     `Rendered mirror — pace ${PAUSE_MS}ms${
       FORCE ? " (force)" : ""
-    }${LIMIT ? ` limit ${LIMIT}` : ""}`,
+    }${LIMIT ? ` limit ${LIMIT}` : ""}${CATEGORY ? ` category=${CATEGORY}` : ""}`,
   );
+
+  let categoryIds: string[] | null = null;
+  if (CATEGORY) {
+    categoryIds = await resolveCategoryIds(CATEGORY);
+    console.log(
+      `Scoped to '${CATEGORY}' + ${categoryIds.length - 1} descendant categor${
+        categoryIds.length === 2 ? "y" : "ies"
+      }.`,
+    );
+  }
 
   let q = supabase
     .from("products")
     .select("id, name, slug, grimco_id, grimco_url, images")
+    .eq("is_active", true)
     .not("grimco_url", "is", null);
+  if (categoryIds) q = q.in("category_id", categoryIds);
   if (!FORCE) q = q.or("images.is.null,images.eq.[]");
   const { data: products, error } = await q;
   if (error) {
