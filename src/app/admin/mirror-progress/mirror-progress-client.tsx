@@ -13,8 +13,23 @@ type RecentEvent = {
   at: number;
 };
 
+type SyncResult = {
+  ok: boolean;
+  rowsRead?: number;
+  rowsSkipped?: number;
+  variantsTouched?: number;
+  variantsUnchanged?: number;
+  variantsNotFound?: number;
+  productsTouched?: number;
+  elapsedMs?: number;
+  error?: string;
+};
+
 const REFETCH_INTERVAL_MS = 10_000;
 const MAX_FEED = 50;
+const SYNC_FUNCTION_URL =
+  (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "") +
+  "/functions/v1/sync-grimco-sheet";
 
 export function MirrorProgressClient({
   initial,
@@ -25,9 +40,30 @@ export function MirrorProgressClient({
   const [events, setEvents] = useState<RecentEvent[]>([]);
   const [sessionCount, setSessionCount] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<{ at: number; result: SyncResult } | null>(
+    null,
+  );
   // Force a re-render every 10 s so "Xs ago" labels update.
   const [, setTick] = useState(0);
   const refetchTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function triggerSync() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const r = await fetch(SYNC_FUNCTION_URL, { method: "POST" });
+      const result = (await r.json()) as SyncResult;
+      setLastSync({ at: Date.now(), result });
+    } catch (e) {
+      setLastSync({
+        at: Date.now(),
+        result: { ok: false, error: String(e) },
+      });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   // 1) Realtime subscription: log every product UPDATE that ends up with images.
   useEffect(() => {
@@ -94,24 +130,60 @@ export function MirrorProgressClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Mirror progress</h1>
           <p className="text-[var(--color-muted)] mt-1">
-            Live image-mirror activity. Counts refresh every 10 s.
+            Live image-mirror activity. Sheet sync runs every 5 minutes; counts
+            refresh every 10 s.
           </p>
         </div>
-        <span
+        <div className="flex items-center gap-3">
+          <span
+            className={
+              connected
+                ? "inline-flex items-center gap-2 text-sm text-[var(--color-success)]"
+                : "inline-flex items-center gap-2 text-sm text-[var(--color-muted)]"
+            }
+          >
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                connected ? "bg-[color:#22c55e]" : "bg-[var(--color-muted)]"
+              }`}
+            />
+            {connected ? "Realtime connected" : "Connecting…"}
+          </span>
+          <button
+            type="button"
+            onClick={triggerSync}
+            disabled={syncing}
+            className={
+              syncing
+                ? "px-3 py-1.5 rounded-md text-sm font-semibold bg-[var(--color-brand-300)] text-white cursor-not-allowed"
+                : "px-3 py-1.5 rounded-md text-sm font-semibold bg-[var(--color-brand-900)] text-white hover:bg-[var(--color-brand-800)]"
+            }
+          >
+            {syncing ? "Syncing…" : "Sync now"}
+          </button>
+        </div>
+      </div>
+
+      {lastSync ? (
+        <div
           className={
-            connected
-              ? "inline-flex items-center gap-2 text-sm text-[var(--color-success)]"
-              : "inline-flex items-center gap-2 text-sm text-[var(--color-muted)]"
+            lastSync.result.ok
+              ? "mt-3 text-xs text-[var(--color-muted)]"
+              : "mt-3 text-xs text-[var(--color-danger)]"
           }
         >
-          <span
-            className={`inline-block h-2 w-2 rounded-full ${
-              connected ? "bg-[color:#22c55e]" : "bg-[var(--color-muted)]"
-            }`}
-          />
-          {connected ? "Realtime connected" : "Connecting…"}
-        </span>
-      </div>
+          Last manual sync {timeAgo(lastSync.at)} —{" "}
+          {lastSync.result.ok
+            ? `${lastSync.result.rowsRead ?? 0} rows, ${
+                lastSync.result.variantsTouched ?? 0
+              } variants updated, ${
+                lastSync.result.productsTouched ?? 0
+              } products updated, ${lastSync.result.variantsNotFound ?? 0} not found (${
+                lastSync.result.elapsedMs ?? 0
+              } ms)`
+            : `error: ${lastSync.result.error ?? "unknown"}`}
+        </div>
+      ) : null}
 
       <div className="mt-6 grid sm:grid-cols-4 gap-4">
         <Stat label="This session" value={String(sessionCount)} />
@@ -160,11 +232,8 @@ export function MirrorProgressClient({
         <h2 className="text-lg font-semibold">Recent activity</h2>
         {events.length === 0 ? (
           <p className="mt-3 text-sm text-[var(--color-muted)]">
-            Nothing yet. Run{" "}
-            <code className="px-1 rounded bg-[var(--color-muted-bg)]">
-              npm run mirror:images -- --category=automotive-films
-            </code>{" "}
-            to start streaming updates here.
+            Nothing yet. The Google-Sheet sync runs every 5 minutes — or hit{" "}
+            <strong>Sync now</strong> above to force a fresh poll.
           </p>
         ) : (
           <ul className="mt-3 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)] text-sm">
