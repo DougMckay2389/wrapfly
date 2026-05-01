@@ -1,24 +1,26 @@
 /**
- * enrich-pricing.ts — per-variant Grimco pricing scrape via Playwright.
+ * enrich-pricing.ts — per-variant Grimco pricing + image scrape via Playwright.
  *
- * For each ACTIVE product (excluding 3M 2080 — Doug said leave it alone):
- *   1. Open Grimco product page in Chromium with persisted Grimco cookies.
- *   2. Click "clear all selections" so every filter is at default.
- *   3. Iterate every visible variant-filter combination (Material UI Autocomplete
- *      dropdowns), each time:
- *        - Select the value
- *        - Wait for the displayed SKU + price to update (~3 s per Grimco's UX)
- *        - Read the SKU + RawPrice
- *   4. For each captured (combo → sku → wholesale_price):
- *        - Call /API/Catalog/UpdatePriceAndPromotion/{SKU} as a sanity check
- *          (also confirms the wholesale price under the user's actual contract).
- *        - Match combo to our DB variant by color + size text.
- *        - UPDATE product_variants SET price = wholesale * 1.30
+ * Iteration pattern (matches Grimco's UX requirement):
+ *   1. "Clear all selections" to start fresh.
+ *   2. DEPTH-FIRST traversal of filter dropdowns:
+ *        for each option of dropdown[0]:
+ *          select it
+ *          for each option of dropdown[1]:
+ *            select it
+ *            ...recurse...
+ *              wait 3.5s for Grimco's price + SKU + image to settle
+ *              capture SKU, wholesale price, hero image
+ *            after inner loop: clear dropdown[1] via its X
+ *          after inner loop: clear dropdown[0] via its X
+ *   3. For each captured (combo → sku → wholesale → image):
+ *        - Match to our DB variant by color + size text.
+ *        - UPDATE product_variants SET price = wholesale * 1.30, image_url = capturedImg
  *
  * Flags:
  *   --slug=mimaki-ss21-solvent-ink   only this product
  *   --skip-3m-2080                   never touch 3M 2080 (default ON)
- *   --pause-ms=3500                  per-combo wait
+ *   --pause-ms=3500                  per-combo wait for prices to load
  *   --headless                       no visible window
  *   --dry-run                        log changes, do not write to DB
  *
@@ -75,178 +77,256 @@ function normSize(s: string | null | undefined): string {
 type CapturedVariant = {
   sku: string;
   wholesale: number;
+  image: string | null;
   combo: Record<string, string>; // e.g. {color: "Black", size: "220 mL"}
   rawPriceText: string;
 };
 
-/* -------------- Per-product variant + price scraper ----------------------- */
+type DropdownInfo = { label: string; options: string[]; index: number };
 
-async function scrapeVariantPrices(page: Page): Promise<CapturedVariant[]> {
-  // 1. Try clear all selections
+/* -------------- Selector helpers ----------------------------------------- */
+
+async function clickClearAllIfPresent(page: Page) {
   try {
     const clearBtn = page.getByText(/clear all selection/i).first();
     if ((await clearBtn.count()) > 0) {
       await clearBtn.click({ timeout: 2000 }).catch(() => {});
-      await sleep(2500);
+      await sleep(2000);
     }
   } catch {
     /* no clear button */
   }
+}
 
-  // 2. Find all variant filter dropdowns. Grimco uses Material UI Autocomplete
-  //    with a label header above (e.g. "SIZE", "COLOR", "FINISH").
-  const dropdowns = await page.locator(".MuiAutocomplete-root").all();
-  if (dropdowns.length === 0) {
-    console.log("    no MuiAutocomplete dropdowns found — single-variant product?");
-    return [];
+async function selectOptionInDropdown(
+  page: Page,
+  dropdownIndex: number,
+  value: string,
+): Promise<boolean> {
+  // Re-locate fresh on each call — MUI rerenders aggressively
+  const dd = page.locator(".MuiAutocomplete-root").nth(dropdownIndex);
+  if ((await dd.count()) === 0) return false;
+  try {
+    const input = dd.locator("input").first();
+    await input.click({ timeout: 1500 });
+    await sleep(150);
+    await input.fill("");
+    await input.type(value, { delay: 15 });
+    await sleep(350);
+    const opt = page
+      .locator('[role="listbox"] [role="option"]')
+      .filter({ hasText: value })
+      .first();
+    if ((await opt.count()) > 0) {
+      await opt.click({ timeout: 1500 });
+      await sleep(250);
+      return true;
+    }
+    await page.keyboard.press("Escape");
+    return false;
+  } catch {
+    return false;
   }
-  console.log(`    found ${dropdowns.length} filter dropdown(s)`);
+}
 
-  // 3. For each dropdown, capture (a) the label name and (b) all option strings.
-  //    The label is usually in a sibling / parent element. Options come from
-  //    opening the dropdown.
-  const dropdownInfo: Array<{ label: string; options: string[] }> = [];
+async function clearDropdown(page: Page, dropdownIndex: number) {
+  // Each MuiAutocomplete root has a clear-X button inside .MuiAutocomplete-clearIndicator
+  // when a value is selected. Click it; falls back to typing Backspace if not found.
+  const dd = page.locator(".MuiAutocomplete-root").nth(dropdownIndex);
+  if ((await dd.count()) === 0) return;
+  try {
+    const clearBtn = dd.locator(".MuiAutocomplete-clearIndicator").first();
+    if ((await clearBtn.count()) > 0) {
+      await clearBtn.click({ force: true, timeout: 1500 });
+      await sleep(350);
+      return;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const input = dd.locator("input").first();
+    await input.click({ timeout: 1500 });
+    await page.keyboard.press("Control+A");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Escape");
+    await sleep(250);
+  } catch {
+    /* give up */
+  }
+}
+
+async function captureCurrentVariant(
+  page: Page,
+): Promise<{ sku: string | null; wholesale: number | null; image: string | null; priceText: string }> {
+  return page.evaluate(() => {
+    const text = document.body.innerText;
+    const skuMatch =
+      text.match(/SKU[:\s]+([A-Z0-9][A-Z0-9._-]{2,30})/i) ||
+      text.match(/Item[:\s#]+([A-Z0-9][A-Z0-9._-]{2,30})/i);
+    const priceMatch = text.match(/\$\s*([0-9,]+\.[0-9]{2})/);
+    const sku = skuMatch?.[1] ?? null;
+    const wholesale = priceMatch
+      ? parseFloat(priceMatch[1].replace(/,/g, ""))
+      : null;
+    // Hero image: largest /Catalog/Products/<x>/ img on the page (not swatch / not in-use)
+    const heroImg = Array.from(document.querySelectorAll<HTMLImageElement>("img"))
+      .map((i) => i.src)
+      .find(
+        (s) =>
+          /\/Catalog\/Products\/[^/]+\//i.test(s) &&
+          !/\/Swatch\//i.test(s) &&
+          !/\/InUse\//i.test(s),
+      );
+    return {
+      sku,
+      wholesale,
+      image: heroImg ?? null,
+      priceText: priceMatch?.[0] ?? "",
+    };
+  });
+}
+
+/* -------------- Discover dropdown labels + options ----------------------- */
+
+async function discoverDropdowns(page: Page): Promise<DropdownInfo[]> {
+  const dropdowns = await page.locator(".MuiAutocomplete-root").all();
+  if (dropdowns.length === 0) return [];
+  const info: DropdownInfo[] = [];
   for (let di = 0; di < dropdowns.length; di++) {
     const dd = dropdowns[di];
-    let label = "filter" + di;
+    let label = `filter${di}`;
     try {
-      // Look up to the parent grid item and find a header text
-      const labelHandle = await dd
+      const txt = await dd
         .locator("xpath=ancestor::*[contains(@class,'MuiGrid-item')][1]")
-        .locator("xpath=preceding-sibling::*[1] | descendant::*[1]")
         .first()
         .innerText()
-        .catch(() => null);
-      if (labelHandle) {
-        label = labelHandle
-          .split("\n")[0]
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "")
-          .slice(0, 30) || label;
+        .catch(() => "");
+      if (txt) {
+        label =
+          txt
+            .split("\n")[0]
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "")
+            .slice(0, 30) || label;
       }
-    } catch {
-      /* fall back to filter index */
-    }
-    // Open dropdown
+    } catch {}
     const trigger = dd.locator("button.MuiAutocomplete-popupIndicator");
     if ((await trigger.count()) === 0) {
-      dropdownInfo.push({ label, options: [] });
+      info.push({ label, options: [], index: di });
       continue;
     }
     try {
       await trigger.click({ timeout: 2000 });
-      await sleep(700);
+      await sleep(600);
       const opts = await page
         .locator('[role="listbox"] [role="option"]')
         .allTextContents();
       const cleaned = opts
         .map((s) => s.trim())
         .filter((s) => s && s !== "​" && s.length < 80);
-      dropdownInfo.push({ label, options: cleaned });
+      info.push({ label, options: cleaned, index: di });
       await page.keyboard.press("Escape");
-      await sleep(300);
+      await sleep(250);
     } catch {
-      dropdownInfo.push({ label, options: [] });
+      info.push({ label, options: [], index: di });
     }
   }
-  console.log(
-    `    dropdown options: ${dropdownInfo
-      .map((d) => `${d.label}=${d.options.length}`)
-      .join(", ")}`,
-  );
+  return info;
+}
 
-  // 4. Build cartesian product of combinations
-  const validDropdowns = dropdownInfo.filter((d) => d.options.length > 0);
-  if (validDropdowns.length === 0) return [];
-  const combos: Array<Record<string, string>> = [];
-  function build(idx: number, current: Record<string, string>) {
-    if (idx >= validDropdowns.length) {
-      combos.push({ ...current });
-      return;
-    }
-    for (const opt of validDropdowns[idx].options) {
-      build(idx + 1, { ...current, [validDropdowns[idx].label]: opt });
-    }
-  }
-  build(0, {});
-  console.log(`    iterating ${combos.length} combination(s)`);
+/* -------------- Recursive depth-first iteration -------------------------- */
 
-  // 5. For each combo, set values + capture SKU + price
-  const captured: CapturedVariant[] = [];
-  let comboIdx = 0;
-  for (const combo of combos) {
-    comboIdx++;
-    // Re-find dropdowns each iteration in case DOM rerenders
-    const ddIter = await page.locator(".MuiAutocomplete-root").all();
-    for (let di = 0; di < ddIter.length; di++) {
-      const dropdown = ddIter[di];
-      const label = dropdownInfo[di]?.label;
-      if (!label) continue;
-      const value = combo[label];
-      if (!value) continue;
-      try {
-        const input = dropdown.locator("input").first();
-        await input.click({ timeout: 1500 });
-        await sleep(200);
-        // Type the value to filter the autocomplete
-        await input.fill("");
-        await input.type(value, { delay: 20 });
-        await sleep(400);
-        // Pick the matching option
-        const opt = page
-          .locator('[role="listbox"] [role="option"]')
-          .filter({ hasText: value })
-          .first();
-        if ((await opt.count()) > 0) {
-          await opt.click({ timeout: 1500 });
-        } else {
-          await page.keyboard.press("Escape");
-        }
-        await sleep(300);
-      } catch {
-        /* skip on selector flake */
-      }
-    }
-    // Wait for price/SKU to update
+async function iterateAndCapture(
+  page: Page,
+  dropdowns: DropdownInfo[],
+  depth: number,
+  currentCombo: Record<string, string>,
+  captured: CapturedVariant[],
+  progressRef: { count: number; total: number },
+): Promise<void> {
+  if (depth >= dropdowns.length) {
+    // Leaf: wait for state to settle, then capture
     await sleep(PAUSE_MS);
-
-    // Extract SKU + price from page (look in the buy-box area)
-    const result = await page.evaluate(() => {
-      const text = document.body.innerText;
-      // Grimco SKU patterns observed: HPCZ682A, MIM-XXX, SPC-XXXXK, etc.
-      // Look for a line like "SKU: XXXXX" or a stand-alone token.
-      const skuMatch =
-        text.match(/SKU[:\s]+([A-Z0-9][A-Z0-9._-]{2,30})/i) ||
-        text.match(/Item[:\s#]+([A-Z0-9][A-Z0-9._-]{2,30})/i);
-      const priceMatch = text.match(/\$\s*([0-9,]+\.[0-9]{2})/);
-      const sku = skuMatch?.[1] ?? null;
-      const wholesale = priceMatch
-        ? parseFloat(priceMatch[1].replace(/,/g, ""))
-        : null;
-      return { sku, wholesale, priceText: priceMatch?.[0] ?? "" };
-    });
-
+    const result = await captureCurrentVariant(page);
+    progressRef.count++;
     if (result.sku && result.wholesale && result.wholesale > 0) {
       captured.push({
         sku: result.sku,
         wholesale: result.wholesale,
-        combo,
+        image: result.image,
+        combo: { ...currentCombo },
         rawPriceText: result.priceText,
       });
       console.log(
-        `      [${comboIdx}/${combos.length}] ${JSON.stringify(combo)} → ${
-          result.sku
-        } @ $${result.wholesale}`,
+        `      [${progressRef.count}/${progressRef.total}] ${JSON.stringify(
+          currentCombo,
+        )} → ${result.sku} @ $${result.wholesale}${result.image ? " +img" : ""}`,
       );
     } else {
       console.log(
-        `      [${comboIdx}/${combos.length}] ${JSON.stringify(
-          combo,
+        `      [${progressRef.count}/${progressRef.total}] ${JSON.stringify(
+          currentCombo,
         )} → no SKU/price found`,
       );
     }
+    return;
   }
 
+  const dd = dropdowns[depth];
+  if (dd.options.length === 0) {
+    // No options here, just recurse without selecting
+    await iterateAndCapture(page, dropdowns, depth + 1, currentCombo, captured, progressRef);
+    return;
+  }
+  for (const option of dd.options) {
+    const ok = await selectOptionInDropdown(page, dd.index, option);
+    if (!ok) {
+      // Couldn't select — skip this branch but log
+      console.log(
+        `      ! could not select ${dd.label}=${option}; skipping subtree`,
+      );
+      continue;
+    }
+    await sleep(400); // let dependent dropdowns refresh
+    await iterateAndCapture(
+      page,
+      dropdowns,
+      depth + 1,
+      { ...currentCombo, [dd.label]: option },
+      captured,
+      progressRef,
+    );
+    // Clear THIS dropdown's X before the next option in this loop
+    await clearDropdown(page, dd.index);
+    await sleep(300);
+  }
+}
+
+/* -------------- Per-product orchestrator --------------------------------- */
+
+async function scrapeVariantPrices(page: Page): Promise<CapturedVariant[]> {
+  await clickClearAllIfPresent(page);
+  const dropdowns = await discoverDropdowns(page);
+  if (dropdowns.length === 0) {
+    console.log("    no MuiAutocomplete dropdowns — single-variant product");
+    return [];
+  }
+  const validDropdowns = dropdowns.filter((d) => d.options.length > 0);
+  console.log(
+    `    dropdowns: ${validDropdowns
+      .map((d) => `${d.label}(${d.options.length})`)
+      .join(", ")}`,
+  );
+  const total = validDropdowns.reduce((acc, d) => acc * d.options.length, 1);
+  console.log(`    will iterate ${total} combination(s) depth-first with X-clearing`);
+
+  const captured: CapturedVariant[] = [];
+  await clickClearAllIfPresent(page);
+  await iterateAndCapture(page, validDropdowns, 0, {}, captured, {
+    count: 0,
+    total,
+  });
   return captured;
 }
 
