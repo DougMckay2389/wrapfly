@@ -22,7 +22,8 @@
     "mirror:images:fast": "tsx scripts/grimco/mirror-images.ts",
     "mirror:categories": "tsx scripts/grimco/mirror-category-images.ts",
     "mirror:login": "tsx scripts/grimco/login-grimco.ts",
-    "enrich:products": "tsx scripts/grimco/enrich-products.ts"
+    "enrich:products": "tsx scripts/grimco/enrich-products.ts",
+    "enrich:pricing": "tsx scripts/grimco/enrich-pricing.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
