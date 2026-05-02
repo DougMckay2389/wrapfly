@@ -112,15 +112,13 @@ async function selectOptionInDropdown(
     await input.click({ timeout: 1500 });
     await sleep(150);
     await input.fill("");
-    // Open the listbox without typing (typing filters by substring, which
-    // makes "Magenta" match BOTH "Magenta" and "Light Magenta" — and MUI
-    // happens to show the longer one first, so we'd select wrong).
-    await input.press("ArrowDown");
-    await sleep(450);
+    // Type the full value — typing triggers MUI's onInputChange + Grimco's
+    // SKU/price refresh, which we need. Substring-matching the result was
+    // the bug (Magenta matched Light Magenta); fix is to filter the
+    // resulting listbox by EXACT match instead of substring + .first().
+    await input.type(value, { delay: 15 });
+    await sleep(400);
 
-    // 1. Exact-text match (case-insensitive, ignoring surrounding whitespace).
-    //    This is the strict path used for color/size names where substring
-    //    matching is dangerous (Magenta vs Light Magenta).
     const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const exact = page
       .locator('.MuiAutocomplete-listbox [role="option"]')
@@ -128,19 +126,6 @@ async function selectOptionInDropdown(
       .first();
     if ((await exact.count()) > 0) {
       await exact.click({ timeout: 1500 });
-      await sleep(250);
-      return true;
-    }
-
-    // 2. Fallback: type to filter, then find by exact match in filtered list.
-    await input.type(value, { delay: 15 });
-    await sleep(350);
-    const exactAfterType = page
-      .locator('.MuiAutocomplete-listbox [role="option"]')
-      .filter({ hasText: new RegExp(`^\\s*${escaped}\\s*$`, "i") })
-      .first();
-    if ((await exactAfterType.count()) > 0) {
-      await exactAfterType.click({ timeout: 1500 });
       await sleep(250);
       return true;
     }
@@ -182,6 +167,28 @@ async function clearDropdown(page: Page, dropdownIndex: number) {
 async function captureCurrentVariant(
   page: Page,
 ): Promise<{ sku: string | null; wholesale: number | null; image: string | null; priceText: string }> {
+  // Poll until either a non-zero price has appeared in MuiTypography-h1, or
+  // we've waited 6 seconds. Avoids capturing the "$0.00" placeholder Grimco
+  // shows while the price API call is in flight.
+  await page
+    .waitForFunction(
+      () => {
+        const h1s = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[class*="MuiTypography-h1"], [class*="MuiTypography-h2"]',
+          ),
+        );
+        for (const el of h1s) {
+          const t = el.innerText.trim();
+          const m = t.match(/^\$\s*([0-9,]+\.[0-9]{2})$/);
+          if (m && parseFloat(m[1].replace(/,/g, "")) > 0) return true;
+        }
+        return false;
+      },
+      { timeout: 6000, polling: 250 },
+    )
+    .catch(() => {});
+
   return page.evaluate(() => {
     const text = document.body.innerText;
     const skuMatch =
@@ -194,11 +201,11 @@ async function captureCurrentVariant(
     //   $XXX.XX           ← MSRP / list (smaller, MuiTypography-subtitle1)
     //   $YYY.YY           ← actual reseller price (LARGER, MuiTypography-h1)
     // We want the second (actual reseller price). Three strategies, in order:
-    //
-    //   1. Find the MuiTypography-h1 element whose text is just "$X.XX" — that
-    //      is the big price. Most reliable.
-    //   2. Match the text pattern "List Price\n$A\n$B" and take B.
-    //   3. Fallback: first $X.XX in the body (legacy behavior).
+    //   1. MuiTypography-h1 element whose text is "$X.XX" AND > 0.
+    //   2. Match "List Price\n$A\n$B" pattern and take B.
+    //   3. Fallback: first non-zero $X.XX in the body.
+    // We deliberately ignore $0.00 (Grimco's placeholder before the price
+    // API call returns).
     let wholesale: number | null = null;
     let priceText = "";
 
@@ -208,9 +215,9 @@ async function captureCurrentVariant(
       ),
     )
       .map((el) => el.innerText.trim())
-      .filter((t) => /^\$\s*[0-9,]+\.[0-9]{2}$/.test(t));
+      .filter((t) => /^\$\s*[0-9,]+\.[0-9]{2}$/.test(t))
+      .filter((t) => parseFloat(t.replace(/[^0-9.]/g, "")) > 0);
     if (h1Prices.length > 0) {
-      // Prefer the largest such number (in case both h1+h2 match).
       const nums = h1Prices.map((s) =>
         parseFloat(s.replace(/[^0-9.]/g, "").replace(/,/g, "")),
       );
@@ -218,21 +225,29 @@ async function captureCurrentVariant(
       priceText = h1Prices[nums.indexOf(wholesale)];
     }
 
-    if (wholesale === null) {
+    if (wholesale === null || wholesale === 0) {
       const listPair = text.match(
         /list\s*price[\s\S]{0,40}?\$\s*([0-9,]+\.[0-9]{2})[\s\S]{0,40}?\$\s*([0-9,]+\.[0-9]{2})/i,
       );
       if (listPair) {
-        wholesale = parseFloat(listPair[2].replace(/,/g, ""));
-        priceText = `$${listPair[2]}`;
+        const v = parseFloat(listPair[2].replace(/,/g, ""));
+        if (v > 0) {
+          wholesale = v;
+          priceText = `$${listPair[2]}`;
+        }
       }
     }
 
-    if (wholesale === null) {
-      const m = text.match(/\$\s*([0-9,]+\.[0-9]{2})/);
-      if (m) {
-        wholesale = parseFloat(m[1].replace(/,/g, ""));
-        priceText = m[0];
+    if (wholesale === null || wholesale === 0) {
+      // Last resort: first NON-ZERO $X.XX anywhere in the body.
+      const all = text.match(/\$\s*[0-9,]+\.[0-9]{2}/g) || [];
+      for (const candidate of all) {
+        const v = parseFloat(candidate.replace(/[^0-9.]/g, "").replace(/,/g, ""));
+        if (v > 0) {
+          wholesale = v;
+          priceText = candidate;
+          break;
+        }
       }
     }
 
