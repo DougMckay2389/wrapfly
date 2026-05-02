@@ -165,12 +165,56 @@ async function captureCurrentVariant(
     const skuMatch =
       text.match(/SKU[:\s]+([A-Z0-9][A-Z0-9._-]{2,30})/i) ||
       text.match(/Item[:\s#]+([A-Z0-9][A-Z0-9._-]{2,30})/i);
-    const priceMatch = text.match(/\$\s*([0-9,]+\.[0-9]{2})/);
     const sku = skuMatch?.[1] ?? null;
-    const wholesale = priceMatch
-      ? parseFloat(priceMatch[1].replace(/,/g, ""))
-      : null;
-    // Hero image: largest /Catalog/Products/<x>/ img on the page (not swatch / not in-use)
+
+    // PRICE — Grimco shows two prices stacked:
+    //   List Price        ← label
+    //   $XXX.XX           ← MSRP / list (smaller, MuiTypography-subtitle1)
+    //   $YYY.YY           ← actual reseller price (LARGER, MuiTypography-h1)
+    // We want the second (actual reseller price). Three strategies, in order:
+    //
+    //   1. Find the MuiTypography-h1 element whose text is just "$X.XX" — that
+    //      is the big price. Most reliable.
+    //   2. Match the text pattern "List Price\n$A\n$B" and take B.
+    //   3. Fallback: first $X.XX in the body (legacy behavior).
+    let wholesale: number | null = null;
+    let priceText = "";
+
+    const h1Prices = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[class*="MuiTypography-h1"], [class*="MuiTypography-h2"]',
+      ),
+    )
+      .map((el) => el.innerText.trim())
+      .filter((t) => /^\$\s*[0-9,]+\.[0-9]{2}$/.test(t));
+    if (h1Prices.length > 0) {
+      // Prefer the largest such number (in case both h1+h2 match).
+      const nums = h1Prices.map((s) =>
+        parseFloat(s.replace(/[^0-9.]/g, "").replace(/,/g, "")),
+      );
+      wholesale = Math.max(...nums);
+      priceText = h1Prices[nums.indexOf(wholesale)];
+    }
+
+    if (wholesale === null) {
+      const listPair = text.match(
+        /list\s*price[\s\S]{0,40}?\$\s*([0-9,]+\.[0-9]{2})[\s\S]{0,40}?\$\s*([0-9,]+\.[0-9]{2})/i,
+      );
+      if (listPair) {
+        wholesale = parseFloat(listPair[2].replace(/,/g, ""));
+        priceText = `$${listPair[2]}`;
+      }
+    }
+
+    if (wholesale === null) {
+      const m = text.match(/\$\s*([0-9,]+\.[0-9]{2})/);
+      if (m) {
+        wholesale = parseFloat(m[1].replace(/,/g, ""));
+        priceText = m[0];
+      }
+    }
+
+    // Hero image: largest /Catalog/Products/<x>/ img (not swatch / not in-use)
     const heroImg = Array.from(document.querySelectorAll<HTMLImageElement>("img"))
       .map((i) => i.src)
       .find(
@@ -183,7 +227,7 @@ async function captureCurrentVariant(
       sku,
       wholesale,
       image: heroImg ?? null,
-      priceText: priceMatch?.[0] ?? "",
+      priceText,
     };
   });
 }
