@@ -112,17 +112,39 @@ async function selectOptionInDropdown(
     await input.click({ timeout: 1500 });
     await sleep(150);
     await input.fill("");
-    await input.type(value, { delay: 15 });
-    await sleep(350);
-    const opt = page
+    // Open the listbox without typing (typing filters by substring, which
+    // makes "Magenta" match BOTH "Magenta" and "Light Magenta" — and MUI
+    // happens to show the longer one first, so we'd select wrong).
+    await input.press("ArrowDown");
+    await sleep(450);
+
+    // 1. Exact-text match (case-insensitive, ignoring surrounding whitespace).
+    //    This is the strict path used for color/size names where substring
+    //    matching is dangerous (Magenta vs Light Magenta).
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const exact = page
       .locator('.MuiAutocomplete-listbox [role="option"]')
-      .filter({ hasText: value })
+      .filter({ hasText: new RegExp(`^\\s*${escaped}\\s*$`, "i") })
       .first();
-    if ((await opt.count()) > 0) {
-      await opt.click({ timeout: 1500 });
+    if ((await exact.count()) > 0) {
+      await exact.click({ timeout: 1500 });
       await sleep(250);
       return true;
     }
+
+    // 2. Fallback: type to filter, then find by exact match in filtered list.
+    await input.type(value, { delay: 15 });
+    await sleep(350);
+    const exactAfterType = page
+      .locator('.MuiAutocomplete-listbox [role="option"]')
+      .filter({ hasText: new RegExp(`^\\s*${escaped}\\s*$`, "i") })
+      .first();
+    if ((await exactAfterType.count()) > 0) {
+      await exactAfterType.click({ timeout: 1500 });
+      await sleep(250);
+      return true;
+    }
+
     await page.keyboard.press("Escape");
     return false;
   } catch {
