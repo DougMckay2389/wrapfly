@@ -451,7 +451,7 @@ async function applyToDB(
 ): Promise<{ matched: number; updated: number; skipped: number }> {
   const { data: variants } = await supabase
     .from("product_variants")
-    .select("id, sku, combination, price")
+    .select("id, sku, combination, price, image_url")
     .eq("product_id", productId);
   if (!variants?.length) {
     console.log(`    DB has no variants for ${productName}`);
@@ -485,22 +485,70 @@ async function applyToDB(
     }
     matched++;
     const newPrice = Math.round(hit.wholesale * MARKUP * 100) / 100;
-    if (Math.abs(Number(v.price) - newPrice) < 0.005) continue;
+    const priceChanged = Math.abs(Number(v.price) - newPrice) >= 0.005;
+    const imageChanged = !!hit.image && hit.image !== v.image_url;
+    if (!priceChanged && !imageChanged) continue;
+    const updatePayload: { price?: number; image_url?: string } = {};
+    if (priceChanged) updatePayload.price = newPrice;
+    if (imageChanged) updatePayload.image_url = hit.image!;
     if (DRY_RUN) {
       console.log(
-        `      DRY: ${v.sku} ${JSON.stringify(combo)} → $${v.price} → $${newPrice}`,
+        `      DRY: ${v.sku} ${JSON.stringify(combo)} → $${v.price} → $${newPrice}` +
+          (imageChanged ? " +img" : ""),
       );
       updated++;
     } else {
       const { error } = await supabase
         .from("product_variants")
-        .update({ price: newPrice })
+        .update(updatePayload)
         .eq("id", v.id);
       if (!error) {
         console.log(
-          `      ${v.sku} ${JSON.stringify(combo)} → $${v.price} → $${newPrice}`,
+          `      ${v.sku} ${JSON.stringify(combo)} → $${v.price} → $${newPrice}` +
+            (imageChanged ? " +img" : ""),
         );
         updated++;
+      } else {
+        console.warn(`      ${v.sku} update error: ${error.message}`);
+      }
+    }
+  }
+
+  // Hero image: if the product's current hero looks like a brand logo (not a
+  // /Catalog/Products/ photo or in the wrong /ProductImages/ folder), promote
+  // the most-common captured variant image to the hero. Only if we have
+  // captured images.
+  if (!DRY_RUN) {
+    const folderCounts = new Map<string, { url: string; n: number }>();
+    for (const c of captured) {
+      if (!c.image) continue;
+      const m = c.image.match(/\/Catalog\/Products\/([^/]+)\//i);
+      if (!m) continue;
+      const key = m[1].toLowerCase();
+      const cur = folderCounts.get(key) ?? { url: c.image, n: 0 };
+      cur.n++;
+      folderCounts.set(key, cur);
+    }
+    const top = Array.from(folderCounts.values()).sort((a, b) => b.n - a.n)[0];
+    if (top) {
+      const { data: prod } = await supabase
+        .from("products")
+        .select("images")
+        .eq("id", productId)
+        .single();
+      const currentHero = Array.isArray(prod?.images) ? prod!.images[0] : null;
+      const looksLikeLogo =
+        !currentHero ||
+        /ProductImages|brand|logo|global/i.test(currentHero) ||
+        !/Catalog\/Products\//i.test(currentHero);
+      if (looksLikeLogo) {
+        const { error: heroErr } = await supabase
+          .from("products")
+          .update({ images: [top.url] })
+          .eq("id", productId);
+        if (!heroErr) {
+          console.log(`    hero image promoted to ${top.url.slice(-60)}`);
+        }
       }
     }
   }
