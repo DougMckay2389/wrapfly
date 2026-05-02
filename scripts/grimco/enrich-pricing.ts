@@ -115,7 +115,7 @@ async function selectOptionInDropdown(
     await input.type(value, { delay: 15 });
     await sleep(350);
     const opt = page
-      .locator('[role="listbox"] [role="option"]')
+      .locator('.MuiAutocomplete-listbox [role="option"]')
       .filter({ hasText: value })
       .first();
     if ((await opt.count()) > 0) {
@@ -250,7 +250,7 @@ async function discoverDropdowns(page: Page): Promise<DropdownInfo[]> {
       await trigger.click({ timeout: 2000 });
       await sleep(600);
       const opts = await page
-        .locator('[role="listbox"] [role="option"]')
+        .locator('.MuiAutocomplete-listbox [role="option"]')
         .allTextContents();
       options = opts
         .map((s) => s.trim())
