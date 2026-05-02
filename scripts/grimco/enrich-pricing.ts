@@ -190,69 +190,38 @@ async function captureCurrentVariant(
 
 /* -------------- Discover dropdown labels + options ----------------------- */
 
-// Patterns that mean "this is a review-sort or other non-product dropdown".
-const NON_PRODUCT_DROPDOWN_PATTERNS: RegExp[] = [
-  /^rating$/i,
-  /^ratings?$/i,
-  /^highest to lowest/i,
-  /^lowest to highest/i,
-  /^most recent/i,
-  /^oldest/i,
-  /^newest/i,
-  /^most helpful/i,
-  /^sort\s*by/i,
-  /^sort:/i,
-  /^date/i,
-  /reviews?/i,
-];
-
-function isNonProductDropdown(label: string, options: string[]): boolean {
-  if (NON_PRODUCT_DROPDOWN_PATTERNS.some((rx) => rx.test(label))) return true;
-  if (options.length === 0) return false;
-  // If most options are review-sort phrases, this is the reviews "Sort by" UI.
-  const reviewish = options.filter((o) =>
-    NON_PRODUCT_DROPDOWN_PATTERNS.some((rx) => rx.test(o)),
-  ).length;
-  if (reviewish / options.length >= 0.4) return true;
-  return false;
-}
+// Any ancestor matching one of these = the dropdown is part of the reviews
+// widget (Bazaarvoice / Grimco's own review section), not a product attribute.
+const REVIEW_CONTAINER_SELECTOR = [
+  "#reviews",
+  "[id^='review']",
+  "[id*='Review']",
+  "[id*='review' i]",
+  "[class*='review' i]",
+  "[data-bv-show]",
+  "[data-bv-product-id]",
+  ".bv-content-list",
+  ".bv-cv2-cleanslate",
+  "#bv-review-display",
+].join(", ");
 
 async function discoverDropdowns(page: Page): Promise<DropdownInfo[]> {
-  // 1. Find the page-Y where reviews start. Anything at-or-below that point
-  //    is review/sort UI, not product attributes.
-  const reviewsCutoffY = await page.evaluate(() => {
-    const all = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        "h1, h2, h3, h4, h5, h6, [role='heading'], [class*='review' i], [id*='review' i]",
-      ),
-    );
-    let minY = Number.MAX_SAFE_INTEGER;
-    for (const el of all) {
-      const t = (el.textContent || "").trim();
-      if (/^(customer\s+)?reviews?\b|^ratings?\b|^write a review/i.test(t)) {
-        const y = el.getBoundingClientRect().top + window.scrollY;
-        if (y > 0 && y < minY) minY = y;
-      }
-    }
-    return minY;
-  });
-
-  // 2. Walk every Autocomplete; keep only those above the reviews cutoff.
   const allDropdowns = await page.locator(".MuiAutocomplete-root").all();
   if (allDropdowns.length === 0) return [];
+
   const info: DropdownInfo[] = [];
   for (let di = 0; di < allDropdowns.length; di++) {
     const dd = allDropdowns[di];
-    let yOnPage = Number.MAX_SAFE_INTEGER;
-    try {
-      yOnPage = await dd.evaluate(
-        (el) => (el as HTMLElement).getBoundingClientRect().top + window.scrollY,
-      );
-    } catch {
-      continue;
-    }
-    if (yOnPage >= reviewsCutoffY) {
-      // Below the reviews heading — skip.
+
+    // Skip if this Autocomplete lives inside the reviews block.
+    const isInReviews = await dd
+      .evaluate(
+        (el, sel) => !!(el as HTMLElement).closest(sel),
+        REVIEW_CONTAINER_SELECTOR,
+      )
+      .catch(() => false);
+    if (isInReviews) {
+      console.log(`   skipping dropdown #${di} (inside reviews section)`);
       continue;
     }
 
@@ -274,10 +243,7 @@ async function discoverDropdowns(page: Page): Promise<DropdownInfo[]> {
     } catch {}
 
     const trigger = dd.locator("button.MuiAutocomplete-popupIndicator");
-    if ((await trigger.count()) === 0) {
-      // Skip empty-trigger dropdowns entirely (they can't be opened).
-      continue;
-    }
+    if ((await trigger.count()) === 0) continue;
 
     let options: string[] = [];
     try {
@@ -293,14 +259,6 @@ async function discoverDropdowns(page: Page): Promise<DropdownInfo[]> {
       await sleep(250);
     } catch {
       /* noop */
-    }
-
-    // Belt-and-suspenders: even if positionally above reviews, reject by pattern.
-    if (isNonProductDropdown(label, options)) {
-      console.log(
-        `   skipping non-product dropdown #${di} label="${label}" options=${JSON.stringify(options.slice(0, 3))}…`,
-      );
-      continue;
     }
 
     info.push({ label, options, index: di });
